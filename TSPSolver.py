@@ -24,17 +24,7 @@ class TSPSolver:
     def setup_with_scenario(self, scenario):
         self._scenario = scenario
 
-    ''' <summary>
-        This is the entry point for the default solver
-        which just finds a valid random tour.  Note this could be used to find your
-        initial BSSF.
-        </summary>
-        <returns>results dictionary for GUI that contains three ints: cost of solution, 
-        time spent to find solution, number of permutations tried during search, the 
-        solution found, and three null values for fields not used for this 
-        algorithm</returns> 
-    '''
-
+    # Untouched from provided code
     def default_random_tour(self, time_allowance=60.0):
         results = {}
         cities = self._scenario.get_cities()
@@ -67,43 +57,79 @@ class TSPSolver:
         results['pruned'] = None
         return results
 
-    ''' <summary>
-        This is the entry point for the greedy solver, which you must implement for 
-        the group project (but it is probably a good idea to just do it for the branch-and
-        bound project as a way to get your feet wet).  Note this could be used to find your
-        initial BSSF.
-        </summary>
-        <returns>results dictionary for GUI that contains three ints: cost of best solution, 
-        time spent to find best solution, total number of solutions found, the best
-        solution found, and three null values for fields not used for this 
-        algorithm</returns> 
-    '''
+    # ----------------------------------------------------------------------------- #
+    #                                                                               #
+    #                                  Optimization                                 #
+    #                                                                               #
+    # ----------------------------------------------------------------------------- #
+    # Included for optimization. This type of function would typically be found in the DistanceTable constructor.
+    # It's removal means that I only have to call len(cities) once per algorithm. It also means that an integer is
+    # stored where a pointer would have been stored in the DistanceTable class. The change resulted in a surprising 50%
+    # speedup.
+    def initialize_dist_table(self) -> DistanceTable:
+        cities = self._scenario.get_cities()
+        n_cities = len(cities)
+        distances = []
+
+        for i in range(n_cities):
+            distances.append([])
+
+            for j in range(n_cities):
+                distances[i].append(cities[i].cost_to(cities[j]))
+
+        return DistanceTable(n_cities, distances)
+
+    # Also included for optimization, as described above.
+    # Time: O(n), Space: O(n)
+    def dist_table_to_solution(self, dist_table: DistanceTable) -> TSPSolution:
+        cities = self._scenario.get_cities()
+        route_cities = []
+
+        # Convert route indexes to cities
+        for index in dist_table.route:
+            route_cities.append(cities[index])
+
+        return TSPSolution(route_cities)
+
+    # ----------------------------------------------------------------------------- #
+    #                                                                               #
+    #                                     Greedy                                    #
+    #                                                                               #
+    # ----------------------------------------------------------------------------- #
+    # A helper function for the greedy algorithm
+    # Time: O(n^2), Space: O(n)
     def solve_greedy(self, start_city_index: int, dist_table: DistanceTable) -> TSPSolution:
         dist_table.set_start_city(start_city_index)
-        next_city_index = dist_table.get_nearest_city()
+        next_city_index = dist_table.get_nearest_city() # Time: O(n), Space: O(1)
         solution = None
 
+        # Time: O(n^2), Space: O(1)
         while next_city_index is not None:
             dist_table.visit(next_city_index)
             next_city_index = dist_table.get_nearest_city()
 
+        # Time: O(n), Space: O(n)
         if dist_table.has_solution():
-            solution = dist_table.to_solution()
+            solution = self.dist_table_to_solution(dist_table)
 
         return solution
 
+    # Time: O(n^3), Space: O(n^2)
     def greedy(self, time_allowance=60.0):
-        dist_table = DistanceTable(self._scenario.get_cities())
+        dist_table = self.initialize_dist_table()
         solution_count = 0
         bssf = None
         results = {}
 
         start_time = time.time()
 
-        for city_index in range(len(dist_table.cities)):
+        # Time: O(n^3), Space: O(n^2)
+        for city_index in range(dist_table.n_cities):       # Iterates O(n) times
             if time.time() - start_time > time_allowance:
                 break
 
+            # Time: O(n^2), Space: O(n^2)
+            # "Deep copies" dist_table of O(n^2) size
             current_solution = self.solve_greedy(city_index, copy.deepcopy(dist_table))
 
             if current_solution is not None:
@@ -124,39 +150,23 @@ class TSPSolver:
 
         return results
 
-    ''' <summary>
-        This is the entry point for the branch-and-bound algorithm that you will implement
-        </summary>
-        <returns>results dictionary for GUI that contains three ints: cost of best solution, 
-        time spent to find best solution, total number solutions found during search (does
-        not include the initial BSSF), the best solution found, and three more ints: 
-        max queue size, total number of states created, and number of pruned states.</returns> 
-    '''
-
+    # ----------------------------------------------------------------------------- #
+    #                                                                               #
+    #                                Branch and Bound                               #
+    #                                                                               #
+    # ----------------------------------------------------------------------------- #
+    # Time: O(n), Space: O(n)
     def prune(self, priority_queue, upper_bound):
         pruned_queue = []
-
-        # print("Priority Queue before pruning")
-        # print("length:", len(priority_queue))
-        # for dist_table in priority_queue:
-        #     print(str(dist_table.lower_bound) + " ", end="")
 
         for i in range(len(priority_queue)):
             if priority_queue[i].lower_bound < upper_bound:
                 pruned_queue.append(priority_queue[i])
 
-        # print()
-        # print()
-
-        # print("Priority Queue after pruning")
-        # print("length:", len(pruned_queue))
-        # for dist_table in pruned_queue:
-        #     print(str(dist_table.lower_bound) + " ", end="")
-
         return pruned_queue, len(priority_queue) - len(pruned_queue)
 
     def branch_and_bound(self, time_allowance=60.0):
-        dist_table = DistanceTable(self._scenario.get_cities())
+        dist_table = self.initialize_dist_table()
         priority_queue = []
         bssf = None
         solution_count = 0
@@ -165,49 +175,56 @@ class TSPSolver:
         total_states = 0
         results = {}
 
-        # Find upper_bound
+        # Find initial upper bound and solution
         greedy_results = self.greedy(time_allowance)
         upper_bound = greedy_results['cost']
         bssf = greedy_results['soln']
 
         start_time = time.time()
 
-        # Find lower_bound
+        # Find initial lower bound
         dist_table.set_start_city(0)
         dist_table.reduce()
         heapq.heappush(priority_queue, dist_table)
 
         # Solve
+        # Time: O(n^2 * b^n), Space: O(n^2 * b^n)
         while len(priority_queue) > 0 and time.time() - start_time < time_allowance:
             parent_table = heapq.heappop(priority_queue)
 
-            # print("Evaluating " + str(parent_table.route[-1]))
-            # print(parent_table)
-
+            # Time : O(n^3), Space: O(n^3)
             for city_index in parent_table.unvisited:
+                # Time: O(n^2), Space: O(n^2)
                 branch_table = copy.deepcopy(parent_table)
-                # print(str(branch_table.route[-1]) + " -> " + str(city_index))
                 total_states += 1
 
+                # Time: O(n), Space: O(1)
                 branch_table.visit(city_index)
+
+                # Time: O(n^2), Space: O(1)
                 branch_table.reduce()
 
                 # print(branch_table)
 
+                # Evaluates solution
                 if branch_table.has_solution():
-                    solution_count += 1
-                    branch_table.complete_cycle()
+                    branch_table.finalize_lower_bound()
 
+                    # Saves solution, else prunes
                     if branch_table.lower_bound < upper_bound:
                         upper_bound = branch_table.lower_bound
-                        bssf = branch_table.to_solution()
+                        bssf = self.dist_table_to_solution(branch_table)
+                        solution_count += 1
                         self.prune(priority_queue, upper_bound)
                     else:
                         pruned_count += 1
 
+                # Evaluates branch
                 elif branch_table.lower_bound < upper_bound:
                     heapq.heappush(priority_queue, branch_table)
                     max_queue_size = max(max_queue_size, len(priority_queue))
+
+                # Prunes branch
                 else:
                     pruned_count += 1
 
@@ -223,14 +240,11 @@ class TSPSolver:
 
         return results
 
-    ''' <summary>
-        This is the entry point for the algorithm you'll write for your group project.
-        </summary>
-        <returns>results dictionary for GUI that contains three ints: cost of best solution, 
-        time spent to find best solution, total number of solutions found during search, the 
-        best solution found.  You may use the other three field however you like.
-        algorithm</returns> 
-    '''
-
+    # ----------------------------------------------------------------------------- #
+    #                                                                               #
+    #                                     Fancy                                     #
+    #                                                                               #
+    # ----------------------------------------------------------------------------- #
+    # Will implement in Project 6
     def fancy(self, time_allowance=60.0):
         pass
